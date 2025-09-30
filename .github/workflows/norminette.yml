@@ -36,5 +36,5 @@ jobs:
 
       - name: Run Norminette
         run: |
-          # 余計なディレクトリが混ざらないよう明示的に指定
-          norminette src includes
+          find . -type d -name src -exec norminette {} \;
+          find . -type d -name includes -exec norminette {} \;
