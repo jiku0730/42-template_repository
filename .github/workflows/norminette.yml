@@ -32,7 +32,7 @@ jobs:
         run: |
           pip install --upgrade pip
           # バージョン固定したい場合は "norminette==3.3.61" のように固定
-          pip install norminette==3.3.61
+          pip install norminette==3.3.59
 
       - name: Run Norminette
         run: |
