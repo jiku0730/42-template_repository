@@ -1,0 +1,178 @@
+# **************************************************************************** #
+#                                                                              #
+#                                                         :::      ::::::::    #
+#    makeconfig                                         :+:      :+:    :+:    #
+#                                                     +:+ +:+         +:+      #
+#    By: kei2003730 <kei2003730@student.42.fr>      +#+  +:+       +#+         #
+#                                                 +#+#+#+#+#+   +#+            #
+#    Created: 2025/06/30 14:37:47 by kjikuhar          #+#    #+#              #
+#    Updated: 2025/07/16 18:25:17 by kei2003730       ###   ########.fr        #
+#                                                                              #
+# **************************************************************************** #
+
+#-----------------------------------------------------------------------------
+#> options
+#-----------------------------------------------------------------------------
+BLACK	:=	\033[30m
+RED		:=	\033[31m
+GREEN	:=	\033[32m
+YELLOW	:=	\033[33m
+BLUE	:=	\033[96m
+MAGENTA	:=	\033[38;5;206m
+CYAN	:=	\033[36m
+WHITE	:=	\033[37m
+RESET	:=	\033[0m
+BOLD	:=	\033[1m
+DIM		:=	\033[2m
+ITALIC	:=	\033[3m
+UNDER	:=	\033[4m
+BLINK	:=	\033[5m
+REVERSE	:=	\033[7m
+HIDDEN	:=	\033[8m
+PINK	:=	\033[35m
+
+#-----------------------------------------------------------------------------
+#▸ variables
+#-----------------------------------------------------------------------------
+NAME		:=	$(LIB_NAME).a
+
+#─ compile config ────────────────────────────────────────────────────────────
+CC			:=	cc
+INCLUDE		:=	-Iincludes
+CFLAGS		:=	-Wall -Wextra -Werror $(INCLUDE)
+
+#─ directory name ────────────────────────────────────────────────────────────
+SRCDIR			:=	src
+OBJDIR			:=	obj
+TESTDIR			:=	test
+TEST_FRAME_DIR	:=	-I../test_frame
+
+#─ sources & objects ─────────────────────────────────────────────────────────
+# source files
+SRC			:=	$(addprefix $(SRCDIR)/, $(SRC_FILES))
+# object files
+OBJ			:=	$(SRC:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
+
+#-----------------------------------------------------------------------------
+#▸ rules
+#-----------------------------------------------------------------------------
+all: $(NAME)
+
+$(NAME): $(OBJ)
+	@echo "$(GREEN)$(BOLD)Compiled with $(CFLAGS)$(RESET)"
+	@ar rcs $@ $^
+	@echo "$(YELLOW)$(BOLD)========================================="
+	@echo "    You can use My $(NAME)!!"
+	@echo "=========================================$(RESET)"
+
+$(OBJDIR)/%.o: $(SRCDIR)/%.c
+	@mkdir -p $(dir $@)
+	@echo "Compiled ✅ $(WHITE) $(BOLD) $^ $(RESET)"
+	@$(CC) $(CFLAGS) -c  $^ -o $@
+
+# clean targets
+clean:
+	@echo "$(RED)$(BOLD)========================================="
+	@echo "    Cleaning up object files..."
+	@echo "=========================================$(RESET)"
+	@rm -rf $(OBJDIR)
+
+fclean: clean
+	@echo "$(RED)$(BOLD)========================================="
+	@echo "    Cleaning up library files..."
+	@echo "=========================================$(RESET)"
+	@rm -f $(NAME)
+
+re: fclean all
+
+# ノルムチェック
+norminette:
+	@echo "$(CYAN)$(BOLD)========================================="
+	@echo "    Checking 42 Norm..."
+	@echo "=========================================$(RESET)"
+	@norminette $(SRC)
+	@echo "$(GREEN)$(BOLD)Norm check completed!$(RESET)"
+
+# test
+test: re
+	@echo "$(CYAN)$(BOLD)========================================="
+	@echo "    Running All Unit Tests"
+	@echo "=========================================$(RESET)"
+	@if [ ! -d "$(TESTDIR)" ]; then \
+		printf "$(RED)$(BOLD)Error: Test directory $(TESTDIR) not found$(RESET)\n"; \
+		exit 1; \
+	fi
+	@TOTAL=0; PASSED=0; FAILED=0; \
+	for test_file in $(TESTDIR)/tst_*.c; do \
+		if [ -f "$$test_file" ]; then \
+			func_name=$$(basename $$test_file .c | sed 's/tst_//'); \
+			printf "$(BLUE)$(BOLD)==== Testing $$func_name ====$(RESET)\n"; \
+			TOTAL=$$((TOTAL + 1)); \
+			if $(CC) $(CFLAGS) $(TEST_FRAME_DIR) $$test_file -o test_$$func_name $(NAME) 2>/dev/null; then \
+				if ./test_$$func_name > test_output_$$func_name 2>&1; then \
+					printf "$(GREEN)✓ PASS: $$func_name$(RESET)\n"; \
+					PASSED=$$((PASSED + 1)); \
+				else \
+					printf "$(RED)✗ FAIL: $$func_name$(RESET)\n"; \
+					cat test_output_$$func_name; \
+					FAILED=$$((FAILED + 1)); \
+				fi; \
+				rm -f test_$$func_name test_output_$$func_name; \
+			else \
+				printf "$(RED)✗ BUILD FAIL: $$func_name$(RESET)\n"; \
+				FAILED=$$((FAILED + 1)); \
+			fi; \
+			echo ""; \
+		fi; \
+	done; \
+	echo "$(CYAN)$(BOLD)=========================================";\
+	echo "    Test Summary"; \
+	echo "=========================================$(RESET)"; \
+	printf "$(GREEN)$(BOLD)Passed: $$PASSED$(RESET)\n"; \
+	printf "$(RED)$(BOLD)Failed: $$FAILED$(RESET)\n"; \
+	printf "$(BLUE)$(BOLD)Total:  $$TOTAL$(RESET)\n"; \
+	if [ $$FAILED -eq 0 ]; then \
+		printf "$(GREEN)$(BOLD)🎉 All tests passed!$(RESET)\n"; \
+	else \
+		printf "$(RED)$(BOLD)❌ Some tests failed!$(RESET)\n"; \
+		exit 1; \
+	fi
+
+# MAKECMDGOALS から "unit_test" を除いた残りを TARGETS に、
+# さらに先頭要素を FUNC に
+TARGETS := $(filter-out unit_test,$(MAKECMDGOALS))
+FUNC    := $(firstword $(TARGETS))
+
+unit_test: re
+	@if [ -z "$(FUNC)" ]; then \
+		printf "$(RED)$(BOLD)Error: please specify function name$(RESET)\n"; \
+		printf "$(YELLOW)Usage: make unit_test [function_name]$(RESET)\n"; \
+		exit 1; \
+	fi
+	@TEST_SRC=$(TESTDIR)/tst_$(FUNC).c; \
+	if [ ! -f $$TEST_SRC ]; then \
+	  printf "$(RED)$(BOLD)Error: $$TEST_SRC not found$(RESET)\n"; \
+	  exit 1; \
+	fi
+	@printf "$(BLUE)==== Testing $(FUNC) ====\n$(RESET)"
+	@$(CC) $(CFLAGS) $(TEST_FRAME_DIR) $(TESTDIR)/tst_$(FUNC).c -o test_$(FUNC) $(NAME)
+	@printf "$(MAGENTA)Running unit test for $(FUNC)...$(RESET)\n"
+	@valgrind --leak-check=full ./test_$(FUNC)
+	@rm -f test_$(FUNC)
+	@printf "$(GREEN)Test for $(FUNC) completed!$(RESET)\n"
+
+# テストファイル一覧表示
+list_tests:
+	@echo "$(CYAN)$(BOLD)========================================="
+	@echo "    Available Test Files"
+	@echo "=========================================$(RESET)"
+	@ls $(TESTDIR)/tst_*.c 2>/dev/null | sed 's|$(TESTDIR)/tst_||g' | sed 's|\.c||g' | while read func; do \
+		echo "$(GREEN)  $$func$(RESET)"; \
+	done || echo "$(RED)No test files found$(RESET)"
+	@echo "$(YELLOW)$(BOLD)Usage: make tset [function_name]$(RESET)"
+
+# 引数を無視するためのダミーターゲット （たとえば make unit_test ft_abs の "ft_abs"を無視する）
+%:
+    @:
+
+.PHONY: all clean fclean re norminette test unit_test list_tests
