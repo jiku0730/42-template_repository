@@ -121,15 +121,3 @@ jobs:
           NUM="${{ steps.pr.outputs.number }}"
           gh api -X POST "/repos/$OWNER/$NAME/issues/$NUM/comments" \
             -f body='✅ Strip branch is ready. You can **Rebase and merge** safely.'
-
-      - name: Enable auto-merge (rebase) if requested
-        if: ${{ inputs.auto_merge }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-        run: |
-          OWNER="${REPO%%/*}"
-          NAME="${REPO##*/}"
-          NUM="${{ steps.pr.outputs.number }}"
-          # Auto-merge（rebase）を予約（保護条件が満たされ次第自動マージ）
-          gh pr merge "$NUM" --rebase --auto
