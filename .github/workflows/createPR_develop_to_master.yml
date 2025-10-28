@@ -70,30 +70,34 @@ jobs:
           echo "strip=$STRIP" >> "$GITHUB_OUTPUT"
 
       # 4) libft サブモジュールを“実体ファイル化”（ベンダリング）
-      #    - actions/checkout で submodules:false なので、ここで HEAD に対して init/update
       - name: Vendor libft submodule into regular files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          # サブモジュール取得（存在しない場合はスキップ）
-          git submodule update --init --recursive || true
+          # ✅ SSH -> HTTPS (token) に書き換え
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "git@github.com:"
+          # .gitmodules の定義も同期
+          git submodule sync --recursive
+          # 取得（浅いクローンでもOK）
+          git submodule update --init --recursive --depth 1 || true
 
           if [ -d "libft" ]; then
             echo "Vendoring libft ..."
             TMP_DIR="$(mktemp -d)"
             rsync -a --delete --exclude ".git" libft/ "$TMP_DIR/libft/"
-            # サブモジュールの gitlink を外す
             git rm -f libft || true
             rm -rf libft
-            # 実体ディレクトリとして戻す
             mkdir -p libft
             rsync -a "$TMP_DIR/libft/" libft/
             git add libft
 
-            # .gitmodules から libft セクションを削除（他が無ければファイル自体も削除）
             if [ -f .gitmodules ]; then
+              # libft セクション除去
               if git config -f .gitmodules --get-regexp '^submodule\.libft\.' >/dev/null 2>&1; then
                 git config -f .gitmodules --remove-section submodule.libft || true
               fi
+              # 他サブモジュールが無ければ .gitmodules 自体を削除
               if [ ! -s .gitmodules ] || ! grep -q 'submodule\.' .gitmodules; then
                 rm -f .gitmodules
                 git rm --cached .gitmodules 2>/dev/null || true
@@ -101,6 +105,7 @@ jobs:
                 git add .gitmodules
               fi
             fi
+
             if ! git diff --cached --quiet; then
               git commit -m "vendor: embed libft sources (turn submodule into regular files)"
             fi
