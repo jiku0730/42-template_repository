@@ -46,7 +46,7 @@ jobs:
           git checkout -B master origin/master
           git fetch origin "${SRC}:${SRC}"
 
-      - name: Pre-check: ensure linear (no merge required on source)
+      - name: Pre-check ensure linear (no merge required on source)
         run: |
           # 必要ならここに追加の検査（lint/test）を入れる
           echo "Ready to prepare strip branch from '${SRC}'."
