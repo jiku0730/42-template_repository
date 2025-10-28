@@ -1,0 +1,21 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/libft/**",
+                "${workspaceFolder}/libft/ft_ctype/include",
+                "${workspaceFolder}/libft/ft_strings/include",
+                "${workspaceFolder}/libft/ft_string/include",
+                "${workspaceFolder}/libft/ft_stdio/include",
+                "${workspaceFolder}/libft/test_frame"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c99",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ],
+    "version": 4
+}
