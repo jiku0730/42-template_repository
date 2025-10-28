@@ -1,0 +1,112 @@
+name: One-Click Strip-Merge (develop -> master)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: "Source branch to merge into master"
+        default: "develop"
+        required: true
+        type: string
+      exclude_paths:
+        description: "Space-separated paths to exclude from master"
+        default: ".github .vscode docs .gitlab-ci.yml"
+        required: true
+        type: string
+      auto_merge:
+        description: "Enable auto-merge (rebase) on created PR"
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      SRC: ${{ inputs.source_branch }}
+      EXCLUDE_PATHS: ${{ inputs.exclude_paths }}
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git (signed commits by Actions)
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config commit.gpgsign true
+
+      - name: Fetch master & source
+        run: |
+          git fetch --all --prune
+          git checkout -B master origin/master
+          git fetch origin "${SRC}:${SRC}"
+
+      - name: Pre-check: ensure linear (no merge required on source)
+        run: |
+          # 必要ならここに追加の検査（lint/test）を入れる
+          echo "Ready to prepare strip branch from '${SRC}'."
+
+      - name: Create strip branch from source HEAD
+        id: mk
+        run: |
+          STRIP="strip/${SRC##*/}-to-master-${GITHUB_RUN_ID}"
+          git switch -c "$STRIP" "${SRC}"
+          echo "strip=$STRIP" >> $GITHUB_OUTPUT
+
+      - name: Strip excluded paths to match master state
+        run: |
+          set -e
+          git fetch origin master:refs/remotes/origin/master
+          for p in $EXCLUDE_PATHS; do
+            # master に同名があれば master の内容で復元、無ければ削除
+            if git ls-tree -r --name-only HEAD | grep -qx "$p" || [ -e "$p" ]; then
+              if git ls-tree -r --name-only origin/master | grep -qx "$p"; then
+                git restore --staged --worktree --source=origin/master -- "$p" || true
+              else
+                rm -rf -- "$p"
+                git rm -r --cached --ignore-unmatch -- "$p" || true
+              fi
+            fi
+          done
+
+      - name: Commit strip changes (if any)
+        run: |
+          if ! git diff --quiet; then
+            git add -A
+            git commit -m "chore: strip excluded paths (EXCLUDE_PATHS='${EXCLUDE_PATHS}')"
+          else
+            echo "No strip changes needed."
+          fi
+
+      - name: Push strip branch
+        run: |
+          git push -u origin "${{ steps.mk.outputs.strip }}"
+
+      - name: Open PR to master
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="Strip-merge (no-squash): ${SRC} -> master"
+          BODY=$'This PR was created by workflow.\nExcluded paths: '"\`${EXCLUDE_PATHS}\`.\nPlease **Rebase and merge**."
+          # 既存の同名PRがあれば再利用
+          EXIST=$(gh pr list --base master --head "${{ steps.mk.outputs.strip }}" --json number -q '.[0].number' || true)
+          if [ -n "$EXIST" ]; then
+            echo "number=$EXIST" >> $GITHUB_OUTPUT
+          else
+            NUM=$(gh pr create --base master --head "${{ steps.mk.outputs.strip }}" --title "$TITLE" --body "$BODY" --json number -q .number)
+            echo "number=$NUM" >> $GITHUB_OUTPUT
+          fi
+          gh pr comment ${{ steps.pr.outputs.number }} -b "✅ Prepared strip branch. You can **Rebase and merge**."
+
+      - name: Enable auto-merge (rebase) if requested
+        if: ${{ inputs.auto_merge }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr merge ${{ steps.pr.outputs.number }} --rebase --auto
