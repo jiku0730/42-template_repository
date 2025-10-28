@@ -33,6 +33,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: master  # ← ここを追加（任意だが安全）
 
       - name: Configure Git (signed commits by Actions)
         run: |
@@ -42,15 +43,16 @@ jobs:
 
       - name: Fetch refs
         run: |
+          set -e
           git fetch --all --prune
-          git fetch origin "${SRC}:${SRC}"
-          git fetch origin master:refs/remotes/origin/master
+          git fetch origin "+refs/heads/${SRC}:refs/remotes/origin/${SRC}" \
+                          "+refs/heads/master:refs/remotes/origin/master"
 
       - name: Create strip branch from source (develop untouched)
         id: mk
         run: |
           STRIP="strip/${SRC##*/}-to-master-${GITHUB_RUN_ID}"
-          git switch -c "$STRIP" "origin/${SRC}"
+          git switch -c "$STRIP" "refs/remotes/origin/${SRC}"
           echo "strip=$STRIP" >> "$GITHUB_OUTPUT"
 
       - name: Remove only excluded paths (match master state or delete)
