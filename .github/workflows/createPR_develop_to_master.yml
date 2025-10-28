@@ -50,7 +50,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config commit.gpgsign true
+          git config commit.gpgsign false
 
       # 2) 必要なリファレンスを取得（ローカルブランチではなく “リモート追跡リファ” を更新）
       - name: Fetch refs safely
