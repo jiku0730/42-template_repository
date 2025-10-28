@@ -1,0 +1,182 @@
+name: One-Click Strip PR (develop -> master)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: "Base branch to fork strip branch from"
+        default: "develop"
+        required: true
+        type: string
+      exclude_paths:
+        description: "Space-separated paths to remove in submission (DO NOT include .github here)"
+        # ← .github は手動で削除する前提なので既定から外しています
+        default: ".vscode docs .gitlab-ci.yml"
+        required: true
+        type: string
+      use_pat_for_pr:
+        description: "Use a PAT secret (PR_CREATOR_TOKEN) to create/comment PR if GITHUB_TOKEN is forbidden"
+        default: false
+        type: boolean
+      auto_merge_rebase:
+        description: "Try to enable auto-merge (rebase) after PR creation (repo must allow auto-merge)"
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  make_strip_pr:
+    runs-on: ubuntu-latest
+    env:
+      SRC: ${{ inputs.source_branch }}
+      EXCLUDE_PATHS: ${{ inputs.exclude_paths }}
+      REPO: ${{ github.repository }}
+      # PR 作成/コメントに使うトークン（403対策として PAT に切替可能）
+      GH_TOKEN: ${{ inputs.use_pat_for_pr && secrets.PR_CREATOR_TOKEN || secrets.GITHUB_TOKEN }}
+    steps:
+      # 0) master をチェックアウトして開始（develop をカレントにしない）
+      - name: Checkout (full history, start from master)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: master
+          submodules: false  # 後で strip ブランチに切替後に submodule を初期化
+
+      # 1) 署名・bot 名義の設定（Require signed commits 向け）
+      - name: Configure Git (signed commits by Actions)
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config commit.gpgsign true
+
+      # 2) 必要なリファレンスを取得（ローカルブランチではなく “リモート追跡リファ” を更新）
+      - name: Fetch refs safely
+        run: |
+          set -e
+          git fetch --all --prune
+          git fetch origin "+refs/heads/${SRC}:refs/remotes/origin/${SRC}" \
+                           "+refs/heads/master:refs/remotes/origin/master"
+
+      # 3) develop を汚さず strip ブランチを作る
+      - name: Create strip branch from source (develop untouched)
+        id: mk
+        run: |
+          set -e
+          STRIP="strip/${SRC##*/}-to-master-${GITHUB_RUN_ID}"
+          git switch -c "$STRIP" "refs/remotes/origin/${SRC}"
+          echo "strip=$STRIP" >> "$GITHUB_OUTPUT"
+
+      # 4) libft サブモジュールを“実体ファイル化”（ベンダリング）
+      #    - actions/checkout で submodules:false なので、ここで HEAD に対して init/update
+      - name: Vendor libft submodule into regular files
+        run: |
+          set -e
+          # サブモジュール取得（存在しない場合はスキップ）
+          git submodule update --init --recursive || true
+
+          if [ -d "libft" ]; then
+            echo "Vendoring libft ..."
+            TMP_DIR="$(mktemp -d)"
+            rsync -a --delete --exclude ".git" libft/ "$TMP_DIR/libft/"
+            # サブモジュールの gitlink を外す
+            git rm -f libft || true
+            rm -rf libft
+            # 実体ディレクトリとして戻す
+            mkdir -p libft
+            rsync -a "$TMP_DIR/libft/" libft/
+            git add libft
+
+            # .gitmodules から libft セクションを削除（他が無ければファイル自体も削除）
+            if [ -f .gitmodules ]; then
+              if git config -f .gitmodules --get-regexp '^submodule\.libft\.' >/dev/null 2>&1; then
+                git config -f .gitmodules --remove-section submodule.libft || true
+              fi
+              if [ ! -s .gitmodules ] || ! grep -q 'submodule\.' .gitmodules; then
+                rm -f .gitmodules
+                git rm --cached .gitmodules 2>/dev/null || true
+              else
+                git add .gitmodules
+              fi
+            fi
+            if ! git diff --cached --quiet; then
+              git commit -m "vendor: embed libft sources (turn submodule into regular files)"
+            fi
+          else
+            echo "No libft directory found; skipping vendoring."
+          fi
+
+      # 5) 提出に不要なパスだけを削除（.github はここでは削除しない：手動で実施方針）
+      - name: Remove excluded paths (except .github)
+        run: |
+          set -e
+          for p in $EXCLUDE_PATHS; do
+            if [ -e "$p" ]; then
+              echo "Removing $p ..."
+              # インデックスとワークツリーから確実に消す
+              git rm -r --cached --ignore-unmatch --force "$p" || true
+              rm -rf "$p" || true
+            fi
+          done
+          if ! git diff --quiet; then
+            git add -A
+            git commit -m "chore: strip excluded paths for submission (EXCLUDE_PATHS='${EXCLUDE_PATHS}')"
+          else
+            echo "No strip changes needed."
+          fi
+
+      # 6) strip ブランチを push
+      - name: Push strip branch
+        run: git push -u origin "${{ steps.mk.outputs.strip }}"
+
+      # 7) master 向け PR を作成（古い gh でも動くように gh api を使用）
+      - name: Open or reuse PR to master
+        id: pr
+        run: |
+          set -e
+          OWNER="${REPO%%/*}"
+          NAME="${REPO##*/}"
+          STRIP="${{ steps.mk.outputs.strip }}"
+          BASE="master"
+          TITLE="Submission PR: ${SRC} -> master (strip + libft vendored)"
+          BODY=$'This PR was created by workflow.\n- Vendored: `libft/` (no longer a submodule)\n- Stripped: '"\`${EXCLUDE_PATHS}\`.\n- Note: .github/ will be removed manually after final checks."
+
+          # 既存の同一ヘッドPRがあれば再利用
+          EXIST_NUM="$(gh api -H "Accept: application/vnd.github+json" \
+            "/repos/$OWNER/$NAME/pulls?head=$OWNER:$STRIP&base=$BASE&state=open" \
+            --jq '.[0].number // empty' || true)"
+
+          if [ -n "$EXIST_NUM" ]; then
+            echo "number=$EXIST_NUM" >> "$GITHUB_OUTPUT"
+          else
+            NEW_NUM="$(gh api -H "Accept: application/vnd.github+json" -X POST \
+              "/repos/$OWNER/$NAME/pulls" \
+              -f base="$BASE" -f head="$STRIP" -f title="$TITLE" -f body="$BODY" \
+              --jq '.number')"
+            echo "number=$NEW_NUM" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 8)（任意）Auto-merge（rebase）を予約（Auto-merge が無効なリポでは自動スキップ）
+      - name: Check if repo allows auto-merge
+        id: repo
+        run: |
+          AM=$(gh api "/repos/${REPO}" --jq '.allow_auto_merge')
+          echo "allow_auto_merge=$AM" >> "$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge (rebase) if allowed
+        if: ${{ steps.repo.outputs.allow_auto_merge == 'true' && inputs.auto_merge_rebase }}
+        run: |
+          gh pr merge ${{ steps.pr.outputs.number }} --rebase --auto || \
+            echo "Auto-merge command issued; it will complete once all required checks pass."
+
+      # 9) 案内コメント
+      - name: Comment hint on PR
+        if: ${{ steps.pr.outputs.number != '' }}
+        run: |
+          OWNER="${REPO%%/*}"
+          NAME="${REPO##*/}"
+          NUM="${{ steps.pr.outputs.number }}"
+          gh api -X POST "/repos/$OWNER/$NAME/issues/$NUM/comments" \
+            -f body='✅ Strip branch is ready.\n- `libft/` vendored (no submodule)\n- Stripped: '"\`${EXCLUDE_PATHS}\`"'\n- After all checks pass, manually delete `.github/` on this strip branch, push, then **Rebase and merge**.'
